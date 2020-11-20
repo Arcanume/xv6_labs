@@ -126,6 +126,11 @@ found:
   memset(&p->context, 0, sizeof(p->context));
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
+  
+  p->alarm_handler=0;
+  p->ticks_record=0;
+  p->ticks_last=0;
+  p->entrant=0;
 
   return p;
 }
@@ -274,8 +279,7 @@ fork(void)
     return -1;
   }
   np->sz = p->sz;
-  np->tracemask=p->tracemask;
-	
+
   np->parent = p;
 
   // copy saved user registers.
@@ -484,10 +488,14 @@ scheduler(void)
       }
       release(&p->lock);
     }
+#if !defined (LAB_FS)
     if(found == 0) {
       intr_on();
       asm volatile("wfi");
     }
+#else
+    ;
+#endif
   }
 }
 
@@ -694,19 +702,3 @@ procdump(void)
     printf("\n");
   }
 }
-
-
-
-uint64 getnproc(){
-  struct proc *p;
-  uint64 cnt=0;
-
-  for(p = proc; p < &proc[NPROC]; p++) {
-    acquire(&p->lock);
-    if(p->state != UNUSED) 
-      cnt++;
-    release(&p->lock);
-  }
-  return cnt;
-}
-

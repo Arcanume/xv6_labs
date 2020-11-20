@@ -7,44 +7,6 @@
 #include "spinlock.h"
 #include "proc.h"
 
-#include "sysinfo.h"
-uint64 getfreemem();
-uint64 getnproc();
-
-uint64 
-sys_sysinfo(void){
-    uint64 p;
-    if(argaddr(0,&p)<0){
-      return -1;
-    }
-    struct sysinfo tmp;
-    tmp.freemem=getfreemem();
-    tmp.nproc=getnproc();
-    struct proc * pro=myproc();
-    if(copyout(pro->pagetable, p, (char*)&tmp, sizeof(struct sysinfo)) < 0)
-      return -1;
-    return 0;
-}
-
-
-
-uint64 
-sys_trace(void){
-
-  int mask;
-  if(argint(0,&mask)<0){
-    return -1;
-  }
-
-  struct proc* p=0;
-  p=myproc();
-  if(!p){
-    return -1;
-  }
-  p->tracemask=mask;
-  return 0;
-}
-
 uint64
 sys_exit(void)
 {
@@ -98,6 +60,7 @@ sys_sleep(void)
 
   if(argint(0, &n) < 0)
     return -1;
+  backtrace();
   acquire(&tickslock);
   ticks0 = ticks;
   while(ticks - ticks0 < n){
@@ -131,5 +94,38 @@ sys_uptime(void)
   acquire(&tickslock);
   xticks = ticks;
   release(&tickslock);
+  
   return xticks;
 }
+
+
+
+uint64 
+sys_sigalarm(void){
+  int tick;
+  uint64 addr;
+
+  if(argint(0, &tick) < 0)
+    return -1;
+  
+  if(argaddr(1, &addr)<0)
+    return -1;
+
+  struct proc *p=myproc();
+  p->ticks_record=tick;
+  p->alarm_handler=addr;
+  p->ticks_last=0;
+  p->entrant=0;
+  
+  return 0;
+
+}
+
+uint64 
+sys_sigreturn(void ){
+   struct proc * p=myproc();
+   (*p->trapframe)=p->trapframe_save;
+   p->entrant=0;
+  return 0;
+}
+
