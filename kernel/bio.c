@@ -23,14 +23,14 @@
 #include "fs.h"
 #include "buf.h"
 
-struct {
-  struct spinlock lock;
-  struct buf buf[NBUF];
+#define prime 13
 
-  // Linked list of all buffers, through prev/next.
-  // Sorted by how recently the buffer was used.
-  // head.next is most recent, head.prev is least.
-  struct buf head;
+struct {
+  //struct spinlock lock;
+  struct buf buf[NBUF];
+  //struct buf head;
+  struct spinlock hash[prime];
+  struct buf hd[prime]; 
 } bcache;
 
 void
@@ -38,17 +38,24 @@ binit(void)
 {
   struct buf *b;
 
-  initlock(&bcache.lock, "bcache");
+  //initlock(&bcache.lock, "bcache");
+
+  for(int i=0;i<prime;i++){
+    initlock(&bcache.hash[i],"bcache");
+    bcache.hd[i].prev = &bcache.hd[i];
+    bcache.hd[i].next = &bcache.hd[i];
+  }
 
   // Create linked list of buffers
-  bcache.head.prev = &bcache.head;
-  bcache.head.next = &bcache.head;
+  //bcache.head.prev = &bcache.head;
+  //bcache.head.next = &bcache.head;
   for(b = bcache.buf; b < bcache.buf+NBUF; b++){
-    b->next = bcache.head.next;
-    b->prev = &bcache.head;
+    int ind=(b-bcache.buf)%prime;
+    b->next = bcache.hd[ind].next;
+    b->prev = &bcache.hd[ind];
     initsleeplock(&b->lock, "buffer");
-    bcache.head.next->prev = b;
-    bcache.head.next = b;
+    bcache.hd[ind].next->prev = b;
+    bcache.hd[ind].next = b;
   }
 }
 
@@ -60,30 +67,53 @@ bget(uint dev, uint blockno)
 {
   struct buf *b;
 
-  acquire(&bcache.lock);
-
+  int ind=blockno%prime;
+  acquire(&bcache.hash[ind]);
   // Is the block already cached?
-  for(b = bcache.head.next; b != &bcache.head; b = b->next){
+  for(b = bcache.hd[ind].next; b != &bcache.hd[ind]; b = b->next){
     if(b->dev == dev && b->blockno == blockno){
       b->refcnt++;
-      release(&bcache.lock);
+      release(&bcache.hash[ind]);
       acquiresleep(&b->lock);
       return b;
     }
   }
-
   // Not cached.
   // Recycle the least recently used (LRU) unused buffer.
-  for(b = bcache.head.prev; b != &bcache.head; b = b->prev){
+  for(b = bcache.hd[ind].prev; b != &bcache.hd[ind]; b = b->prev){
     if(b->refcnt == 0) {
       b->dev = dev;
       b->blockno = blockno;
       b->valid = 0;
       b->refcnt = 1;
-      release(&bcache.lock);
+      release(&bcache.hash[ind]);
       acquiresleep(&b->lock);
       return b;
     }
+  }
+  for(int i=(ind+1)%prime;i!=ind;i=(i+1)%prime){
+    acquire(&bcache.hash[i]);
+    for(b = bcache.hd[i].prev; b != &bcache.hd[i]; b = b->prev){
+      if(b->refcnt == 0) {
+        //remove the buffer
+        b->next->prev = b->prev;
+        b->prev->next = b->next;
+        release(&bcache.hash[i]);
+        b->dev = dev;
+        b->blockno = blockno;
+        b->valid = 0;
+        b->refcnt = 1;
+        //add the buffer
+        b->next = bcache.hd[ind].next;
+        b->prev = &bcache.hd[ind];
+        bcache.hd[ind].next->prev = b;
+        bcache.hd[ind].next = b;
+        release(&bcache.hash[ind]);
+        acquiresleep(&b->lock);
+        return b;
+      }
+    }
+    release(&bcache.hash[i]);
   }
   panic("bget: no buffers");
 }
@@ -120,34 +150,37 @@ brelse(struct buf *b)
     panic("brelse");
 
   releasesleep(&b->lock);
-
-  acquire(&bcache.lock);
+  int ind=b->blockno%prime;
+  acquire(&bcache.hash[ind]);
+  
   b->refcnt--;
   if (b->refcnt == 0) {
     // no one is waiting for it.
     b->next->prev = b->prev;
     b->prev->next = b->next;
-    b->next = bcache.head.next;
-    b->prev = &bcache.head;
-    bcache.head.next->prev = b;
-    bcache.head.next = b;
+    b->next = bcache.hd[ind].next;
+    b->prev = &bcache.hd[ind];
+    bcache.hd[ind].next->prev = b;
+    bcache.hd[ind].next = b;
   }
   
-  release(&bcache.lock);
+  release(&bcache.hash[ind]);
 }
 
 void
 bpin(struct buf *b) {
-  acquire(&bcache.lock);
+  int ind=b->blockno%prime;
+  acquire(&bcache.hash[ind]);
   b->refcnt++;
-  release(&bcache.lock);
+  release(&bcache.hash[ind]);
 }
 
 void
 bunpin(struct buf *b) {
-  acquire(&bcache.lock);
+  int ind=b->blockno%prime;
+  acquire(&bcache.hash[ind]);
   b->refcnt--;
-  release(&bcache.lock);
+  release(&bcache.hash[ind]);
 }
 
 

@@ -1,5 +1,0 @@
-1\ while one thread, the table would be accessed by two threads simultaneously, so no problem
-but when two threads work together, they may access the same table at the same time
-and if they execute the codes like this sequence, something will be wrong!
-thread0 executes the line 34, thread1 executes line 34, thread0 executes line 35, thread1 executes line 35;
-
