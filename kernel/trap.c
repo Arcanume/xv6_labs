@@ -33,8 +33,6 @@ trapinithart(void)
 // handle an interrupt, exception, or system call from user space.
 // called from trampoline.S
 //
-
-int pagefault(uint64 va);
 void
 usertrap(void)
 {
@@ -69,18 +67,7 @@ usertrap(void)
     syscall();
   } else if((which_dev = devintr()) != 0){
     // ok
-  } else if(r_scause()==15){
-      uint64 va=r_stval();
-      //printf("page fault:%d add:%p\n",r_scause(),va);
-      if(va>p->sz){
-        printf("va> p->zd\n");
-        p->killed=1;
-      }
-      if(pagefault(va)!=0)
-        p->killed=1;
-
-  }
-  else{
+  } else {
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
     p->killed = 1;
@@ -96,52 +83,6 @@ usertrap(void)
   usertrapret();
 }
 
-int pagefault(uint64 va){
-//cow
-     
-    struct proc* p=myproc();
-   
-        //keep aligned
-    va=PGROUNDDOWN(va);
-    pte_t * pte;
-    uint64 pa;
-    uint flags;
-        
-    if((pte = walk(p->pagetable, va, 0)) == 0){
-      printf("usertrap: pte should exist\n");
-      return -1;
-    }
-      
-    if((*pte & PTE_V) == 0){
-      printf("usertrap: page not present\n");
-      return -1;
-    }
-    if((*pte&PTE_W)||(*pte&PTE_C)==0){
-      printf("usertrap: not cow\n");
-      return -1;
-    }
-          
-    pa = PTE2PA(*pte);
-    flags = PTE_FLAGS(*pte);
-    flags=flags&(~PTE_C);
-    flags=flags|PTE_W;
-
-    char *mem;
-    if((mem=kalloc())==0)
-      return -1;
-    memmove((void*)mem,(void *)pa,PGSIZE);
-    kfree((void*)pa);
-    *pte=PA2PTE((uint64)mem)|flags;
-        
-    /*
-    if(mappages(p->pagetable,va,PGSIZE,(uint64)mem,flags)!=0){
-      kfree(mem);
-      panic("fail to map");
-    }
-    */
-   return 0;
-        
-}
 //
 // return to user space
 //
