@@ -1,0 +1,3 @@
+text and data
+user stack
+no 

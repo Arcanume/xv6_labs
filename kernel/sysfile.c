@@ -165,68 +165,6 @@ bad:
   return -1;
 }
 
-uint64 
-sys_symlink(void){
-  
-  char name[DIRSIZ], target[MAXPATH], path[MAXPATH];
-  struct inode *dp, *ip;
-
-  if(argstr(0, target, MAXPATH) < 0 || argstr(1, path, MAXPATH) < 0)
-    return -1;
-
-  begin_op();
-
-  if((dp = nameiparent(path, name)) == 0){
-    end_op();
-    return -1;
-  }
-   
-  ilock(dp);
-  //create link
-  if((ip=dirlookup(dp,name,0))!=0){
-    if(ip->type==T_SYMLINK){
-      char next[MAXPATH];
-      if(readi(ip,0,(uint64)next,0,MAXPATH)!=MAXPATH){
-        iunlockput(dp);
-        end_op();
-        return -1;
-      }
-      if(strncmp(target,next,MAXPATH)==0){
-        iunlockput(dp);
-        end_op();
-        return 0;
-      }
-    }
-    iunlockput(dp);
-    end_op();
-    return -1;
-  }
-
-  if((ip=ialloc(dp->dev,T_SYMLINK))==0){
-    printf("symlink: ialloc\n");
-    return -1;
-  }
-    
-  ilock(ip);
-  ip->major=0;
-  ip->minor=0;
-  ip->nlink=1;
-  //store the target address
-  iupdate(ip);
-  writei(ip,0,(uint64)target,0,sizeof(target));
-  //write the target to inode->data
-
-  if(dirlink(dp,name,ip->inum)<0){
-    printf("symlink: dirlink\n");
-    return -1;
-  }
-    
-  iunlockput(ip);
-  iunlockput(dp);
-  end_op();
-  return 0;
-}
-
 // Is the directory dp empty except for "." and ".." ?
 static int
 isdirempty(struct inode *dp)
@@ -365,8 +303,7 @@ sys_open(void)
       end_op();
       return -1;
     }
-  } 
-  else {
+  } else {
     if((ip = namei(path)) == 0){
       end_op();
       return -1;
@@ -376,37 +313,6 @@ sys_open(void)
       iunlockput(ip);
       end_op();
       return -1;
-    }
-  }
-  
-  //fs
-  if(ip->type==T_SYMLINK){
-    if(!(omode&O_NOFOLLOW)){
-      char next[MAXPATH];
-      struct inode *dp;
-      int cnt=0;
-      while(1){
-        readi(ip,0,(uint64)next,0,MAXPATH);
-        if((dp=namei(next))==0){
-          iunlockput(ip);
-          end_op();
-          return -1;
-        }
-        ilock(dp);
-        iunlockput(ip);
-
-        ip=dp;
-
-        if(ip->type!=T_SYMLINK)
-          break;
-        
-        cnt++;
-        if(cnt>10){
-          iunlockput(ip);
-          end_op();
-          return -1;
-        }
-      }
     }
   }
 
