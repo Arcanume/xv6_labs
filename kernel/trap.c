@@ -2,9 +2,11 @@
 #include "param.h"
 #include "memlayout.h"
 #include "riscv.h"
+//#include "file.h"
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+
 
 struct spinlock tickslock;
 uint ticks;
@@ -67,11 +69,55 @@ usertrap(void)
     syscall();
   } else if((which_dev = devintr()) != 0){
     // ok
+  }else if(r_scause()==13||r_scause()==15){
+    uint64 va=r_stval();
+    char* mem;
+    //copy with the map
+    int i;
+    int flag=0;
+    for(i=0; i<VMASIZE;i++){
+      if(p->vma[i].addr&&p->vma[i].addr<=va&&va<(p->vma[i].addr+p->vma[i].length)){
+        flag=1;
+        mem=kalloc();
+        if(mem==0)
+          exit(-1);
+        memset(mem,0,PGSIZE);
+        int flags=p->vma[i].prot<<1;
+        if(mappages(p->pagetable,PGROUNDDOWN(va),PGSIZE, (uint64)mem, flags|PTE_U) != 0){
+          kfree(mem);
+          panic("usertrap: map fail");
+        }
+        fileread2(p->vma[i].filep,PGROUNDDOWN(va),PGSIZE,PGROUNDDOWN(va)-p->vma[i].front);
+        break;
+      }
+    }
+    if(flag)
+      goto over;
+    
+
+    if(va>p->sz)
+      exit(-1);
+    uint64 sp=p->trapframe->sp;
+    sp=PGROUNDDOWN(sp);
+    if(va <= sp)
+      exit(-1);
+    mem=kalloc();
+    if(mem==0)
+      exit(-1);
+    memset(mem,0,PGSIZE);
+    if(mappages(p->pagetable,PGROUNDDOWN(va),PGSIZE, (uint64)mem, PTE_W|PTE_X|PTE_R|PTE_U) != 0){
+      kfree(mem);
+      panic("usertrap: map fail");
+    }
+
+
+
   } else {
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
     p->killed = 1;
   }
+over:
 
   if(p->killed)
     exit(-1);

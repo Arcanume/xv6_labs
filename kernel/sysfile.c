@@ -15,6 +15,7 @@
 #include "sleeplock.h"
 #include "file.h"
 #include "fcntl.h"
+#include "memlayout.h"
 
 // Fetch the nth word-sized system call argument as a file descriptor
 // and return both the descriptor and the corresponding struct file.
@@ -484,3 +485,94 @@ sys_pipe(void)
   }
   return 0;
 }
+
+uint64
+sys_mmap(void){
+  uint64 addr;
+  int length,prot,flags,fd,offset;
+  struct file * fp;
+  if(argaddr(0, &addr) < 0 || argint(1,&length) < 0|| argint(2,&prot) < 0||
+      argint(3,&flags) < 0 || argfd(4,&fd,&fp) < 0 || argint(5,&offset) < 0)
+    return -1;
+  
+  if(flags==MAP_SHARED&& prot & PROT_WRITE && !fp->writable){
+      return -1;
+  }
+  struct proc* p = myproc();
+
+  // where to place the region
+  int i;
+  for(i=0; i<VMASIZE;i++){
+    if(p->vma[i].addr==0)
+      break;
+  }
+  if(i==VMASIZE)
+    return -1;
+  //set the info of vma
+  p->vma[i].filep=filedup(fp);;
+  p->vma[i].fd=fd;
+  p->vma[i].flags=flags;
+  p->vma[i].length=length;
+  p->vma[i].prot=prot;
+  int pz=((length+PGSIZE-1)/PGSIZE)*PGSIZE;
+  if(i==0)
+    p->vma[i].addr=TRAPFRAME-pz;
+  else
+    p->vma[i].addr=p->vma[i-1].addr-pz;
+  p->vma[i].front=p->vma[i].addr;
+  return p->vma[i].addr;
+}
+
+uint64
+sys_munmap(void){
+  uint64 addr;
+  int length;
+  if(argaddr(0, &addr) < 0 || argint(1,&length) < 0)
+    return -1;
+  struct proc* p = myproc();
+  int i;
+  for(i=0; i<VMASIZE;i++){
+    if(p->vma[i].addr<=addr&&(addr+length)<=(p->vma[i].addr+p->vma[i].length))
+      break;
+  }
+  if(i==VMASIZE)
+    return -1;
+  
+  if((addr%PGSIZE)!=0){
+    printf("not aligned\n");
+    return -1;
+  }
+  
+  uint64 j;
+  pte_t* pte;
+  int off;
+  for(j=addr;j<addr+length;j+=PGSIZE){
+    if((pte = walk(p->pagetable, j, 0)) == 0)
+      continue;
+    if((*pte & PTE_V) == 0)
+      continue;
+    if(PTE_FLAGS(*pte) == PTE_V)
+      panic("munmap: not a leaf");
+    if(p->vma[i].flags &  MAP_SHARED){
+      off=j-p->vma[i].front;
+      filewrite2(p->vma[i].filep, j ,PGSIZE,off);
+    }
+    uint64 pa = PTE2PA(*pte);
+    kfree((void*)pa);
+    *pte=0;
+  }
+  //update the vma
+  if(p->vma[i].addr<addr){
+    p->vma[i].length=addr-p->vma[i].addr;
+  }else if(length< p->vma[i].length){
+    p->vma[i].addr=addr+length;
+    p->vma[i].length-=length;
+  }else{
+    fileclose(p->vma[i].filep);
+    memset(&p->vma[i],0,sizeof(p->vma[i]));
+  }
+
+  return 0;
+}
+
+
